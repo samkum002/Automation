@@ -10,6 +10,7 @@ export interface ConverterOptions {
 
 /**
  * Converts an Automaton data structure to React Flow nodes and edges.
+ * Every transition is mapped to an independent, clearly labeled, visually distinguishable edge.
  */
 export function automatonToReactFlow(
   automaton: Automaton,
@@ -46,61 +47,87 @@ export function automatonToReactFlow(
     };
   });
 
-  // 2. Group transitions by (from, to) pair
-  const groupedTransitions = new Map<string, { from: string; to: string; symbols: string[]; isSelfLoop: boolean }>();
-
+  // 2. Index transitions by directed pair (from -> to) to calculate non-overlapping curve offsets
+  const pairMap = new Map<string, Transition[]>();
   for (const t of automaton.transitions) {
     const key = `${t.from}->${t.to}`;
-    if (!groupedTransitions.has(key)) {
-      groupedTransitions.set(key, {
-        from: t.from,
-        to: t.to,
-        symbols: [t.symbol],
-        isSelfLoop: t.from === t.to,
-      });
-    } else {
-      const existing = groupedTransitions.get(key)!;
-      if (!existing.symbols.includes(t.symbol)) {
-        existing.symbols.push(t.symbol);
-      }
+    if (!pairMap.has(key)) {
+      pairMap.set(key, []);
     }
+    pairMap.get(key)!.push(t);
   }
 
-  // 3. Build Edges
+  // 3. Build Edges (one edge per transition, maintaining symbol purity and distinct paths)
   const edges: Edge[] = [];
-  groupedTransitions.forEach((group, key) => {
-    const isSelfLoop = group.isSelfLoop;
-    const hasReverse = !isSelfLoop && groupedTransitions.has(`${group.to}->${group.from}`);
 
-    // Check if this transition group has any active transition
+  automaton.transitions.forEach((t, globalIndex) => {
+    const isSelfLoop = t.from === t.to;
+    const forwardList = pairMap.get(`${t.from}->${t.to}`) || [];
+    const idx = forwardList.indexOf(t);
+    const hasReverse = !isSelfLoop && pairMap.has(`${t.to}->${t.from}`);
+
+    let curveOffset = 0;
+    let loopIndex = 0;
+
+    if (isSelfLoop) {
+      loopIndex = idx >= 0 ? idx : 0;
+    } else if (hasReverse) {
+      // Both u->v and v->u exist: curve outwards so they never overlap
+      curveOffset = 30 + idx * 30;
+    } else if (forwardList.length > 1) {
+      // Multiple edges in the same direction: distribute them symmetrically around center
+      if (forwardList.length % 2 === 1) {
+        if (idx === 0) {
+          curveOffset = 0;
+        } else {
+          const sign = (idx - 1) % 2 === 0 ? 1 : -1;
+          const mag = (Math.floor((idx - 1) / 2) + 1) * 32;
+          curveOffset = sign * mag;
+        }
+      } else {
+        const sign = idx % 2 === 0 ? 1 : -1;
+        const mag = (Math.floor(idx / 2) + 1) * 32;
+        curveOffset = sign * mag;
+      }
+    }
+
+    // Determine if this transition is actively being traversed during simulation
     const isActive = activeTransitions.some(
-      (at) => at.from === group.from && at.to === group.to && group.symbols.includes(at.symbol)
+      (at) => at.from === t.from && at.to === t.to && at.symbol === t.symbol
     );
 
-    // Pick handles:
     let sourceHandle: string | undefined = undefined;
     let targetHandle: string | undefined = undefined;
 
     if (isSelfLoop) {
-      sourceHandle = 'top-source';
-      targetHandle = 'top-target';
+      if (loopIndex < 2) {
+        sourceHandle = 'top-source';
+        targetHandle = 'top-target';
+      } else {
+        sourceHandle = 'bottom-source';
+        targetHandle = 'bottom-target';
+      }
     } else if (hasReverse) {
-      // Curve opposite directions
       sourceHandle = 'bottom-source';
       targetHandle = 'bottom-target';
     }
 
+    const edgeId = t.id ? `edge_${t.id}` : `edge_${t.from}_${t.to}_${globalIndex}`;
+
     edges.push({
-      id: `edge_${key}`,
-      source: group.from,
-      target: group.to,
+      id: edgeId,
+      source: t.from,
+      target: t.to,
       type: 'customEdge',
       sourceHandle,
       targetHandle,
       data: {
-        symbols: group.symbols,
+        transitionId: t.id,
+        symbol: t.symbol,
         isActive,
         isSelfLoop,
+        loopIndex,
+        curveOffset,
       },
       markerEnd: {
         type: MarkerType.ArrowClosed,

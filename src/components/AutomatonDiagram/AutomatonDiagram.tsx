@@ -69,7 +69,9 @@ function AutomatonDiagramInner({
   // Synchronize nodes and edges only when computed representations change
   const lastRenderedKeyRef = useRef<string>('');
   useEffect(() => {
-    const syncKey = `${automaton.id}_${automaton.states.length}_${automaton.transitions.length}_${activeKey}_${activeTransKey}_${currentStepKey}`;
+    const statesDetailsKey = automaton.states.map((s) => `${s.id}:${s.label}:${s.isInitial}:${s.isFinal}`).join(';');
+    const transDetailsKey = automaton.transitions.map((t) => `${t.id}:${t.from}->${t.to}:${t.symbol}`).join(';');
+    const syncKey = `${automaton.id}_${statesDetailsKey}_${transDetailsKey}_${activeKey}_${activeTransKey}_${currentStepKey}`;
     if (lastRenderedKeyRef.current !== syncKey) {
       lastRenderedKeyRef.current = syncKey;
       const rf = automatonToReactFlow(automaton, options);
